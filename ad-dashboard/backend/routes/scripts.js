@@ -9,6 +9,28 @@ const { analyzeScript }          = require('../scripts/ai-analyzer');
 const { requireRole }            = require('../middleware/auth');
 const logger  = require('../logger');
 
+// ─── Domain Controllers allowlist ────────────────────────────────────────────
+// Add or remove DCs here. The frontend DcSelector.jsx DC_MAP must also be
+// updated to match — both lists control what reaches the WinRM runner.
+// Connection uses the service account identity set in IIS App Pool / NSSM.
+const ALLOWED_DCS = [
+  // NAM — North America
+  'DC01-NewYork.corp.abg.com',
+  'DC02-Chicago.corp.abg.com',
+  'DC03-Dallas.corp.abg.com',
+  // EMEA — Europe / Middle East / Africa
+  'DC01-London.corp.abg.com',
+  'DC02-Frankfurt.corp.abg.com',
+  'DC03-Dubai.corp.abg.com',
+  // APAC — Asia Pacific
+  'DC01-Singapore.corp.abg.com',
+  'DC02-Sydney.corp.abg.com',
+  'DC03-Tokyo.corp.abg.com',
+  // DR — Disaster Recovery
+  'DC01-DR.corp.abg.com',
+  'DC02-DR.corp.abg.com',
+];
+
 // Multer: accept only .ps1 files, store in memory for AI analysis first
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -134,13 +156,7 @@ router.post('/:id/run', async (req, res) => {
   const { dcTarget, params = {} } = req.body;
   if (!dcTarget) return res.status(400).json({ error: 'dcTarget is required' });
 
-  // Validate DC is in allowed list
-  const ALLOWED_DCS = [
-    'DC01-NewYork.corp.abg.com','DC02-Chicago.corp.abg.com','DC03-Dallas.corp.abg.com',
-    'DC01-London.corp.abg.com','DC02-Frankfurt.corp.abg.com','DC03-Dubai.corp.abg.com',
-    'DC01-Singapore.corp.abg.com','DC02-Sydney.corp.abg.com','DC03-Tokyo.corp.abg.com',
-    'DC01-DR.corp.abg.com','DC02-DR.corp.abg.com'
-  ];
+  // Validate DC is in allowed list (defined at top of file)
   if (!ALLOWED_DCS.includes(dcTarget)) {
     return res.status(400).json({ error: 'Invalid DC target' });
   }
