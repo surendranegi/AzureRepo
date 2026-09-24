@@ -153,7 +153,7 @@ router.post('/:id/run', async (req, res) => {
     }
   }
 
-  const { dcTarget, params = {} } = req.body;
+  const { dcTarget, params = {}, credentials } = req.body;
   if (!dcTarget) return res.status(400).json({ error: 'dcTarget is required' });
 
   // Validate DC is in allowed list (defined at top of file)
@@ -161,7 +161,22 @@ router.post('/:id/run', async (req, res) => {
     return res.status(400).json({ error: 'Invalid DC target' });
   }
 
-  // Insert run record as 'running'
+  // Validate credentials if provided — must have both username and password
+  // Credentials are used for this request only and are never stored or logged
+  let runCredentials = null;
+  if (credentials) {
+    const { username, password } = credentials;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Both username and password are required' });
+    }
+    // Basic sanity check on username format (DOMAIN\user or user@domain)
+    if (!/^[\w\-.\\@]+$/.test(username) || username.length > 256) {
+      return res.status(400).json({ error: 'Invalid username format' });
+    }
+    runCredentials = { username, password };
+  }
+
+  // Insert run record as 'running' — run_by is the Windows Auth user, never the AD password
   const insertRun = db.prepare(`
     INSERT INTO run_history (script_id, run_by, dc_target, parameters, status)
     VALUES (?, ?, ?, ?, 'running')
@@ -169,7 +184,7 @@ router.post('/:id/run', async (req, res) => {
   const { lastInsertRowid: runId } = insertRun.run(row.id, req.user.username, dcTarget, JSON.stringify(params));
 
   try {
-    const result = await runScript(row.file_path, dcTarget, params);
+    const result = await runScript(row.file_path, dcTarget, params, runCredentials);
 
     const status = result.exitCode === 0 ? 'success' : 'error';
     db.prepare(`

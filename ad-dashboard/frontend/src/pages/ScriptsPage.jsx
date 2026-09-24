@@ -4,7 +4,7 @@ import { CategoryFilter, CategoryChip } from '../components/CategoryFilter';
 import { RiskBadge } from '../components/RiskBadge';
 import { ScriptRunner } from '../components/ScriptRunner';
 
-export function ScriptsPage({ user, dcTarget }) {
+export function ScriptsPage({ user, dcTarget, credentials }) {
   const [scripts, setScripts]           = useState([]);
   const [category, setCategory]         = useState('all');
   const [loading, setLoading]           = useState(true);
@@ -66,6 +66,7 @@ export function ScriptsPage({ user, dcTarget }) {
         <ScriptRunner
           script={selectedScript}
           dcTarget={dcTarget}
+          credentials={credentials}
           userWriteAccess={user.writeAccess}
           onClose={() => setSelected(null)}
         />

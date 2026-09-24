@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useCurrentUser } from './hooks/useCurrentUser';
 import { DcSelector } from './components/DcSelector';
+import { CredentialPanel } from './components/CredentialPanel';
 import { ScriptsPage } from './pages/ScriptsPage';
 import { HistoryPage } from './pages/HistoryPage';
 import { UploadPage } from './pages/UploadPage';
@@ -13,11 +14,15 @@ const TABS = [
   { id: 'users',    label: '👥 Users',   adminOnly: true }
 ];
 
+const EMPTY_CREDS = { username: '', password: '' };
+
 export default function App() {
   const { user, loading, error } = useCurrentUser();
   const [tab, setTab]             = useState('scripts');
   const [region, setRegion]       = useState('nam');
   const [dc, setDc]               = useState('DC01-NewYork.corp.abg.com');
+  // Credentials are in-memory only — cleared on region change, never persisted
+  const [credentials, setCredentials] = useState(EMPTY_CREDS);
 
   if (loading) return <FullPage>Loading…</FullPage>;
   if (error)   return <FullPage style={{ color: '#ef4444' }}>
@@ -26,9 +31,15 @@ export default function App() {
 
   const visibleTabs = TABS.filter(t => !t.adminOnly || user.role === 'it-admin');
 
+  function handleRegionChange(newRegion) {
+    setRegion(newRegion);
+    // Clear credentials when switching domain — different domains need different accounts
+    setCredentials(EMPTY_CREDS);
+  }
+
   function renderTab() {
     switch (tab) {
-      case 'scripts': return <ScriptsPage user={user} dcTarget={dc} />;
+      case 'scripts': return <ScriptsPage user={user} dcTarget={dc} credentials={credentials} />;
       case 'history': return <HistoryPage user={user} />;
       case 'upload':  return <UploadPage  user={user} />;
       case 'users':   return <UsersPage   user={user} />;
@@ -55,7 +66,10 @@ export default function App() {
       </header>
 
       {/* DC selector */}
-      <DcSelector region={region} dc={dc} onRegionChange={setRegion} onDcChange={setDc} />
+      <DcSelector region={region} dc={dc} onRegionChange={handleRegionChange} onDcChange={setDc} />
+
+      {/* Credential panel — per domain, in-memory only */}
+      <CredentialPanel credentials={credentials} onChange={setCredentials} />
 
       {/* Tabs */}
       <nav style={styles.nav}>

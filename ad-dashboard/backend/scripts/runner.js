@@ -2,11 +2,14 @@
  * PowerShell script runner.
  *
  * Executes a .ps1 file against a remote DC using WinRM (Invoke-Command).
- * Arguments are passed as a hashtable via -ArgumentList so no string
- * concatenation ever touches user input (prevents injection).
+ * Script arguments are passed as a PS hashtable — no string concatenation.
+ *
+ * Credentials are passed via environment variables (PS_CRED_USER / PS_CRED_PASS)
+ * on the child process — NOT via command-line arguments, which are visible in
+ * Task Manager / process listings. The env vars exist only for the lifetime of
+ * the child process and are never logged.
  *
  * Requires: PowerShell 7+ (pwsh) installed on the server.
- * The server's service account must have WinRM access to the target DC.
  */
 const { spawn } = require('child_process');
 const path = require('path');
@@ -18,34 +21,54 @@ const TIMEOUT_MS  = parseInt(process.env.PS_TIMEOUT_MS || '60000', 10);
 /**
  * Run a PowerShell script against a Domain Controller via WinRM.
  *
- * @param {string} scriptPath - Full path to the .ps1 file on the server
- * @param {string} dcTarget   - Fully-qualified DC hostname, e.g. DC01-NewYork.corp.abg.com
- * @param {Object} params     - Key/value pairs matching the script's param() block
- * @returns {Promise<{stdout: string, stderr: string, exitCode: number, durationMs: number}>}
+ * @param {string} scriptPath   - Full path to the .ps1 file on the server
+ * @param {string} dcTarget     - Fully-qualified DC hostname
+ * @param {Object} params       - Script param() key/value pairs
+ * @param {Object} [credentials]- { username: 'CORP\\user', password: '...' }
+ *                                If omitted, runs under the process identity (service account)
+ * @returns {Promise<{stdout, stderr, exitCode, durationMs}>}
  */
-function runScript(scriptPath, dcTarget, params = {}) {
+function runScript(scriptPath, dcTarget, params = {}, credentials = null) {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
 
-    // Build a hashtable literal for -ArgumentList so values are never interpolated
+    // Build a hashtable literal for -ArgumentList — values are never interpolated
     const hashEntries = Object.entries(params)
       .map(([k, v]) => `${sanitizeParamName(k)} = ${toPsLiteral(v)}`)
       .join('; ');
     const argHashtable = `@{ ${hashEntries} }`;
 
-    // The wrapper script: loads the target script as a scriptblock and
-    // calls Invoke-Command with the argument hashtable
+    // Wrapper script: build PSCredential from env vars if provided,
+    // then call Invoke-Command. The credential block is included only
+    // when credentials are supplied — otherwise uses process identity.
+    const credBlock = credentials
+      ? `
+$_pass = ConvertTo-SecureString $env:PS_CRED_PASS -AsPlainText -Force
+$_cred = [System.Management.Automation.PSCredential]::new($env:PS_CRED_USER, $_pass)
+$_credParam = @{ Credential = $_cred }`
+      : `$_credParam = @{}`;
+
     const wrapperScript = `
 $ErrorActionPreference = 'Stop'
+${credBlock}
 $scriptBlock = [scriptblock]::Create((Get-Content -Raw -LiteralPath '${escapePsPath(scriptPath)}'))
-Invoke-Command -ComputerName '${escapePsString(dcTarget)}' -ScriptBlock $scriptBlock -ArgumentList ${argHashtable}
+Invoke-Command -ComputerName '${escapePsString(dcTarget)}' -ScriptBlock $scriptBlock -ArgumentList ${argHashtable} @_credParam
 `.trim();
 
     const psArgs = ['-NonInteractive', '-NoProfile', '-Command', wrapperScript];
 
-    logger.info(`Running script "${path.basename(scriptPath)}" against ${dcTarget}`);
+    // Credentials go into the child env, not the command line
+    const childEnv = { ...process.env };
+    if (credentials) {
+      childEnv.PS_CRED_USER = credentials.username;
+      childEnv.PS_CRED_PASS = credentials.password;
+    }
+
+    const runAs = credentials ? credentials.username : '(service account)';
+    logger.info(`Running "${path.basename(scriptPath)}" against ${dcTarget} as ${runAs}`);
 
     const child = spawn('pwsh', psArgs, {
+      env: childEnv,
       timeout: TIMEOUT_MS,
       windowsHide: true
     });
@@ -64,7 +87,7 @@ Invoke-Command -ComputerName '${escapePsString(dcTarget)}' -ScriptBlock $scriptB
     child.on('close', exitCode => {
       clearTimeout(timer);
       const durationMs = Date.now() - startTime;
-      logger.info(`Script "${path.basename(scriptPath)}" finished in ${durationMs}ms, exit=${exitCode}`);
+      logger.info(`"${path.basename(scriptPath)}" finished in ${durationMs}ms, exit=${exitCode}`);
       resolve({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode, durationMs });
     });
 
@@ -88,18 +111,10 @@ function toPsLiteral(value) {
   if (value === null || value === undefined) return '$null';
   if (typeof value === 'boolean') return value ? '$true' : '$false';
   if (typeof value === 'number') return String(value);
-  // String: escape single quotes by doubling them, wrap in single quotes
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
-/** Escape a file path for use in single-quoted PS string (forward slashes only) */
-function escapePsPath(p) {
-  return p.replace(/'/g, "''");
-}
-
-/** Escape a hostname for use in single-quoted PS string */
-function escapePsString(s) {
-  return s.replace(/'/g, "''");
-}
+function escapePsPath(p)   { return p.replace(/'/g, "''"); }
+function escapePsString(s) { return s.replace(/'/g, "''"); }
 
 module.exports = { runScript, SCRIPT_ROOT };

@@ -3,7 +3,7 @@ import { api } from '../api';
 import { RiskBadge } from './RiskBadge';
 import { CategoryChip } from './CategoryFilter';
 
-export function ScriptRunner({ script, dcTarget, userWriteAccess, onClose }) {
+export function ScriptRunner({ script, dcTarget, credentials, userWriteAccess, onClose }) {
   const [paramValues, setParamValues]   = useState({});
   const [running, setRunning]           = useState(false);
   const [result, setResult]             = useState(null);
@@ -11,17 +11,27 @@ export function ScriptRunner({ script, dcTarget, userWriteAccess, onClose }) {
 
   const canRun = !['Write','Destructive'].includes(script.risk_level)
     || userWriteAccess.includes(script.category);
+  const hasCredentials = credentials?.username && credentials?.password;
 
   function setParam(name, value) {
     setParamValues(prev => ({ ...prev, [name]: value }));
   }
 
   async function handleRun() {
+    if (!hasCredentials) {
+      setError('Enter your domain credentials in the "Run As" bar before running a script.');
+      return;
+    }
     setRunning(true);
     setResult(null);
     setError(null);
     try {
-      const res = await api.runScript(script.id, { dcTarget, params: paramValues });
+      const res = await api.runScript(script.id, {
+        dcTarget,
+        params: paramValues,
+        // Credentials travel over HTTPS only — not stored, not logged
+        credentials: { username: credentials.username, password: credentials.password }
+      });
       setResult(res);
     } catch (e) {
       setError(e.message);
@@ -95,10 +105,15 @@ export function ScriptRunner({ script, dcTarget, userWriteAccess, onClose }) {
         {canRun ? (
           <button
             onClick={handleRun}
-            disabled={running}
-            style={{ ...styles.runBtn, opacity: running ? 0.6 : 1 }}
+            disabled={running || !hasCredentials}
+            style={{ ...styles.runBtn, opacity: (running || !hasCredentials) ? 0.5 : 1 }}
+            title={!hasCredentials ? 'Enter credentials in the Run As bar first' : ''}
           >
-            {running ? '⏳ Running…' : `▶ Run on ${dcTarget.split('.')[0]}`}
+            {running
+              ? '⏳ Running…'
+              : hasCredentials
+                ? `▶ Run as ${credentials.username} on ${dcTarget.split('.')[0]}`
+                : '🔐 Enter credentials to run'}
           </button>
         ) : (
           <div style={styles.noAccess}>
