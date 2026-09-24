@@ -1,0 +1,6 @@
+node_modules/
+backend/.env
+backend/data/
+backend/logs/
+frontend/build/
+*.ps1.bak
